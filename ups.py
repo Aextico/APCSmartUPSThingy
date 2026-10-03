@@ -1,23 +1,20 @@
-#TO DO:simulate power failure
-
-from machine import UART
+import uasyncio as asyncio
 import time
 
-uart = UART(1, baudrate=2400, bits=8, parity=None, stop=1)
 class Ups:
     def __init__(self, uart):
       self.uart = uart
       self.model = ""
       self.serial_number = ""
-      self.batt_voltage = 0
+      self.battery_voltage = 0
       self.line_voltage = 0
       self.load_level = 0
       self.battery_level = 0.0
       self.status = ""
       self.temperature = 0.0
-      self_cause_of_transfer = ""
-      self_estimated_runtime= ""
-      self_self_test_results = ""
+      self.cause_of_transfer = ""
+      self.estimated_runtime= 0
+      self.self_test_results = ""
 
 
     def _send_command(self,cmd):
@@ -25,7 +22,7 @@ class Ups:
       time.sleep(1)
       answer = self.uart.read()
       if answer is not None:
-        return (answer.decode("ASCII")).strip()
+        return (answer.decode()).strip()
 
     def initialize_smart_mode(self):
       smart_mode = self._send_command(b'Y')
@@ -49,22 +46,22 @@ class Ups:
       else:
         self.serial_number = "N/A"
 
-    def download_batt_voltage(self):
+    def download_battery_voltage(self):
       b_voltage = self._send_command(b'B')
       if b_voltage is not None:
         try:
-          self.batt_voltage = float(voltage)
-        except error:
-          self.batt_voltage = 0        
+          self.battery_voltage = float(b_voltage)
+        except (ValueError, TypeError):
+          self.battery_voltage = 0        
       else:
-        self.batt_voltage = 0
+        self.battery_voltage = 0
         
     def download_line_voltage(self):
       l_voltage = self._send_command(b'L')
       if l_voltage is not None:
         try:
-          self.line_voltage = float(voltage)
-        except error:
+          self.line_voltage = float(l_voltage)
+        except (ValueError, TypeError):
           self.line_voltage = 0        
       else:
         self.line_voltage = 0
@@ -74,7 +71,7 @@ class Ups:
       if l_level is not None:
         try:
           self.load_level = float(l_level)
-        except error:
+        except (ValueError, TypeError):
           self.load_level = 0        
       else:
         self.load_level = 0
@@ -83,29 +80,39 @@ class Ups:
       b_level = self._send_command(b'f')
       if b_level is not None:
         try:
-          self.battery_level = float(b_levellevel)
-        except error:
+          self.battery_level = float(b_level)
+        except (ValueError, TypeError):
           self.battery_level = 0        
       else:
         self.battery_level = 0
 
     def download_status(self):
-      status = self._send_command(b'Q')
-      if status is not None:
-        status = int(status,16)
-        if status & (1<<3):
-          self.status = "On-Line"
-        elif status & (1<<4):
-          self.status = "On-Battery"
-      else:
-        self.status = "N/A"
+        status = self._send_command(b'Q')
+        if status is not None:
+            status_clean = status.strip()
+            if len(status_clean) > 2:
+                status_clean = status_clean[-2:]
+                
+            try:
+                status_val = int(status_clean, 16)
+                if status_val & (1 << 3):
+                    self.status = "On-Line"
+                elif status_val & (1 << 4):
+                    self.status = "On-Battery"
+                else:
+                    self.status = "Other"
+            except ValueError:
+                print(f"[UPS] Nieprawidłowa ramka statusu: {repr(status)}")
+                self.status = "Error"
+        else:
+            self.status = "N/A"
         
     def download_temperature(self):
       temperature = self._send_command(b'C')
       if temperature is not None:
         try:
           self.temperature = float(temperature)
-        except error:
+        except (ValueError, TypeError):
           self.temperature = 0
       else:
         self.temperature = 0
@@ -119,14 +126,16 @@ class Ups:
         self.cause_of_transfer = "N/A"
 
     def download_estimated_runtime(self):
-      runtime = self._send_command(b'j')
-      if runtime is not None:
-        try:
-          self.runtime = int(runtime)
-        except error:
-          self.runtime = 0        
-      else:
-        self.runtime = 0
+        runtime = self._send_command(b'j')
+        if runtime is not None:
+            try:
+                # Oczyszczenie z \r\n i usunięcie dwukropka z końca
+                cleaned = runtime.strip().rstrip(':')
+                self.estimated_runtime = int(cleaned)
+            except (ValueError, TypeError):
+                self.estimated_runtime = 0
+        else:
+            self.estimated_runtime = 0
 
     def do_a_self_test(self):
       results = {"OK":"Battery OK","BT":"Failed due to insufficient capacity","NG":"Failed due to overload","NO":"No results available"}
@@ -140,10 +149,10 @@ class Ups:
 
     def simulate_power_failure(self):
       self.uart.write(b'U')
-      time.sleep(20)
+      time.sleep(10)
       power_failure = self.uart.read()
       if power_failure is not None:
-        decoded_power_failure = power_failure.decode("ASCII")
+        decoded_power_failure = power_failure.decode()
         if "!" in decoded_power_failure and "$" in decoded_power_failure:
           return "Success, UPS back On-Line"
         else:
